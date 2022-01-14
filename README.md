@@ -56,6 +56,7 @@ then the melody was manually built into the sources.
 The game sources is split as the following:
 
 * `src/wasm4.nelua` - WASM4 bindings
+* `src/neco.nelua` - Mini game framework on top of SDL2, with auxiliary functions for drawing, playing sound and retrieving input
 * `src/w4neco.nelua` - Mini game framework on top of WASM4, with auxiliary functions for drawing, playing sound and retrieving input
 * `src/antcopter.nelua` - All the game logic plus auxiliary functions in a single file.
 * `assets` - Folder with all sprite sheet, font, map and tileset.

@@ -1,9 +1,7 @@
 -- Minimal framework for WASM4
-require 'wasm4'
+require '.wasm4'
 require 'math'
 require 'memory'
-require 'vector'
-require 'string'
 
 ## function neco_setup(opts)
   local opt_scalar_concept = #[concept(function(x) return x.type.is_niltype or x.type.is_scalar end)]#
@@ -302,23 +300,35 @@ require 'string'
     end
   end
 
+  global WaveType = @enum(byte) {
+    SQUARE = 0,
+    SAW,
+    TRIANGLE,
+    NOISE,
+  }
   global ToneDesc = @record{
     start_frequency: float32,
     end_frequency: float32,
+    volume: float32,
     attack: uint32,
     release: uint32,
     decay: uint32,
     sustain: uint32,
-    mode: byte,
-    channel: byte,
-    volume: byte
+    wave_type: WaveType
   }
 
   -- Play a tone
   global function tonex(desc: ToneDesc)
+    local channel: uint8, mode: uint8 = 0, 0
+    switch desc.wave_type do
+      case WaveType.SQUARE then channel=TONE_PULSE1 mode=TONE_MODE3
+      case WaveType.SAW then channel=TONE_PULSE2 mode=TONE_MODE4
+      case WaveType.TRIANGLE then channel=TONE_TRIANGLE
+      case WaveType.NOISE then channel=TONE_NOISE
+    end
     tone((@uint32)(math.round(desc.end_frequency)) << 16 | (@uint32)(math.round(desc.start_frequency)),
          desc.sustain | desc.release << 8 | desc.decay << 16 | desc.attack << 24,
-         desc.volume, desc.channel | desc.mode)
+         math.iceil(desc.volume * 100), channel | mode)
   end
 
   -- Draws a pixel

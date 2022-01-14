@@ -1,9 +1,35 @@
-require 'w4neco'
+-- Replace default primitives (shrinks about 113 bytes)
+-- WARNING: Default integer maximum will be dropped to 2^31-1.
+## primtypes.uinteger = primtypes.uint32
+## primtypes.integer = primtypes.int32
+## primtypes.number = primtypes.float32
+
+-- Disable the GC (shrink about 3976 bytes)
+-- WARNING: Allocated memory will need to be deallocated manually.
+## context.rootpragmas.nogc = true
+
+-- Replace general allocator to use a heap on static memory (shrink about 9295 bytes)
+-- WARNING: Heap memory will be fixed to 32KB, tune to not have out memory errors.
+require 'allocators.heap'
+global embedded_general_allocator: HeapAllocator(32*1024)
+require 'allocators.default'
+
+-- Require Neco framework.
+## if NECO then
+require '.neco'
+## else
+require '.w4neco'
+## end
+
+require 'vector'
+require 'string'
 
 ##[==[
 neco_setup({
   width=160, height=160,
   tilesize=8,
+  fps=60,
+  scale=ccinfo.is_wasm and 1 or 4,
   gfx='assets/jam.ppm',
   map='assets/jam.lua',
   font = {
@@ -14,6 +40,7 @@ neco_setup({
     glyph_width=3,
     image='assets/font.ppm'
   },
+  print='ptext',
 })
 ]==]
 
@@ -207,40 +234,40 @@ function Game:spawn_object(id: int16, pos: Vec2): *Object <forwarddecl> end
 -- Sound effects
 
 global function sfx(x: integer)
-  local desc: ToneDesc = {volume=30}
+  local desc: ToneDesc
   local busy = 0
   switch x do
   case SoundEffectId.Jump then -- jump
-    desc={start_frequency=400, end_frequency=200, sustain=4, release=2, channel=TONE_NOISE, volume=30}
+    desc={start_frequency=400, end_frequency=200, sustain=4, release=2, wave_type=WaveType.NOISE, volume=0.3}
   case SoundEffectId.Collide then -- collide
-    desc={start_frequency=250, end_frequency=100, sustain=4, release=2, channel=TONE_NOISE, volume=30}
+    desc={start_frequency=250, end_frequency=100, sustain=4, release=2, wave_type=WaveType.NOISE, volume=0.3}
   case SoundEffectId.WallSlide then -- wall slide
-    desc={start_frequency=490, sustain=6, release=1, channel=TONE_NOISE, volume=4}
+    desc={start_frequency=490, sustain=6, release=1, wave_type=WaveType.NOISE, volume=0.2}
   case SoundEffectId.Glide then -- glide
-    desc={start_frequency=600, end_frequency=100, sustain=1, release=1, channel=TONE_PULSE1, mode=TONE_MODE3, volume=25}
+    desc={start_frequency=600, end_frequency=100, sustain=1, release=1, wave_type=WaveType.SQUARE, volume=0.25}
   case SoundEffectId.Death then -- death
-    desc={start_frequency=300, end_frequency=200, sustain=4, release=4, channel=TONE_NOISE, volume=40}
+    desc={start_frequency=300, end_frequency=200, sustain=4, release=4, wave_type=WaveType.NOISE, volume=0.4}
   case SoundEffectId.Upgrade then -- upgrade fruit
-    desc={start_frequency=220, end_frequency=440*2, sustain=112, release=4, channel=TONE_PULSE1, mode=TONE_MODE2, volume=30}
+    desc={start_frequency=220, end_frequency=440*2, sustain=112, release=4, wave_type=WaveType.SQUARE, volume=0.3}
   case SoundEffectId.Fruit1 then -- fruit 1
-    desc={start_frequency=C4*4, sustain=4, release=2, channel=TONE_PULSE1, mode=TONE_MODE2, volume=30}
+    desc={start_frequency=C4*4, sustain=4, release=2, wave_type=WaveType.SQUARE, volume=0.3}
     busy = 6
   case SoundEffectId.Fruit2 then -- fruit 2
-    desc={start_frequency=E4*4, sustain=4, release=4, channel=TONE_PULSE1, mode=TONE_MODE2, volume=30}
+    desc={start_frequency=E4*4, sustain=4, release=4, wave_type=WaveType.SQUARE, volume=0.3}
     busy = 8
   case SoundEffectId.Step1 then -- step 1
-    desc={start_frequency=300, end_frequency=400, sustain=1, release=1, channel=TONE_NOISE, volume=30}
+    desc={start_frequency=300, end_frequency=400, sustain=1, release=1, wave_type=WaveType.NOISE, volume=0.2}
   case SoundEffectId.Step2 then -- step 2
-    desc={start_frequency=320, end_frequency=420, sustain=1, release=1, channel=TONE_NOISE, volume=30}
+    desc={start_frequency=320, end_frequency=420, sustain=1, release=1, wave_type=WaveType.NOISE, volume=0.2}
   case SoundEffectId.GameStart then -- game start
-    desc={start_frequency=220, end_frequency=440, sustain=60, release=4, channel=TONE_NOISE, volume=30}
+    desc={start_frequency=220, end_frequency=440, sustain=60, release=4, wave_type=WaveType.NOISE, volume=0.3}
   case SoundEffectId.GameEnd then -- game end
-    desc={start_frequency=220, end_frequency=440*4, sustain=112, release=4, channel=TONE_PULSE1, mode=TONE_MODE2, volume=30}
+    desc={start_frequency=220, end_frequency=440*4, sustain=112, release=4, wave_type=WaveType.SQUARE, volume=0.3}
   else
     return
   end
-  if desc.volume > 0 and game.busy_channels[desc.channel] == 0 then
-    game.busy_channels[desc.channel] = busy
+  if game.busy_channels[desc.wave_type] == 0 then
+    game.busy_channels[desc.wave_type] = busy
     tonex(desc)
   end
 end
@@ -271,8 +298,8 @@ function Game:play_music()
       tonex{
         start_frequency = bass_notes[self.notes % #bass_notes] / 4,
         sustain = speed-2, release = 1,
-        volume = 48,
-        channel = TONE_TRIANGLE,
+        volume = 0.5,
+        wave_type = WaveType.TRIANGLE,
       }
     end
     if self.notes >= #rhythm_notes then
@@ -280,15 +307,15 @@ function Game:play_music()
         tonex{
           start_frequency = rhythm_notes[self.notes % #rhythm_notes],
           sustain = speed-2, release = 1,
-          volume = 12,
-          channel = TONE_PULSE2,
+          volume = 0.2,
+          wave_type = WaveType.SAW,
         }
       else
         tonex{
           start_frequency = lead_notes[self.notes % #lead_notes],
           sustain = speed-2, release = 1,
-          volume = 12,
-          channel = TONE_PULSE2,
+          volume = 0.2,
+          wave_type = WaveType.SAW,
         }
       end
     end
