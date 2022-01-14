@@ -3,7 +3,7 @@
 This is a minimal game using [Nelua](https://github.com/edubart/nelua-lang)
 programming language for the [WASM-4 Game Jam](https://itch.io/jam/wasm4).
 
-![Demo](https://cdn.discordapp.com/attachments/890276476883198042/929714960387407923/game-2022-01-09_09.28.02.mp4)
+![Screenshot](https://img.itch.zone/aW1hZ2UvMTM1MzU2MC83ODc5NDIxLnBuZw==/250x600/OtiFLw.png)
 
 ## Why am I participating?
 
@@ -21,7 +21,7 @@ in that regard, although the language was already doing great!
 ## Play it
 
 Play the game at in the browser or in the mobile at
-https://edubart.github.io/antcopter/index.html
+https://edubart.itch.io/antcopter
 
 ## Game mechanics
 
