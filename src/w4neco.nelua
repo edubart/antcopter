@@ -1,0 +1,508 @@
+-- Minimal framework for WASM4
+require 'wasm4'
+require 'math'
+require 'memory'
+require 'vector'
+require 'string'
+
+## function neco_setup(opts)
+  local opt_scalar_concept = #[concept(function(x) return x.type.is_niltype or x.type.is_scalar end)]#
+  local scalar_concept = #[concept(function(x) return x.type.is_scalar end)]#
+
+  -- initialize
+  ##[==[
+  local function read_indexed_ppm_image(filename)
+    local file, open_err = io.open(filename,'rb')
+    if not file then return nil, string.format('file %s: %s', filename, open_err) end
+    local filedata,read_err = file:read('*a')
+    file:close()
+    if not filedata then return nil, read_err end
+    if not filedata then return string.format('file %s: %s', filename, read_err) end
+    local ppm_patt = require'nelua.thirdparty.lpegrex'.compile([[
+    file <- {| 'P6' skip
+               {:width: %d+ :} skip
+               {:height: %d+ :} skip
+               {:maxval: %d+ :} %s
+               {:data: .* :} |}
+    skip <- (%s / '#' (!%nl .)* %nl)+
+    ]])
+    local ppm = ppm_patt:match(filedata)
+    if not ppm then return nil, string.format('file %s: unsupported PPM file format', filename) end
+    ppm.width, ppm.height, ppm.maxval = tonumber(ppm.width), tonumber(ppm.height), tonumber(ppm.maxval)
+    assert(ppm.maxval == 255)
+    local pos = 1
+    local data = ppm.data
+    local size = ppm.height*ppm.width
+    local usedcolors = {[0] = true}
+    local pixels = {}
+    local colors = {}
+    for i=1,size do
+      local color
+      color, pos = string.unpack('>I3', data, pos)
+      pixels[i] = color
+      if not usedcolors[color] then
+        colors[#colors+1] = color
+        usedcolors[color] = true
+      end
+    end
+    table.sort(colors)
+    local index2color = {[0]=0}
+    local color2index = {[0]=0}
+    for i,color in ipairs(colors) do
+      index2color[i] = color
+      color2index[color] = i
+    end
+    local indexdata = {}
+    for i=1,size do
+      indexdata[i] = string.char(color2index[pixels[i]])
+    end
+    return table.concat(indexdata), ppm.width, ppm.height, index2color
+  end
+
+  local function read_tiled_map(filename)
+    local tiledmap = dofile(opts.map)
+    local tileddata = tiledmap.layers[1].data
+    local mapdata = {}
+    for i=1,#tileddata do
+      local id = tileddata[i]
+      if id ~= 0 then id = id - 1 end
+      mapdata[#mapdata+1] = string.pack('I1', id)
+    end
+    return table.concat(mapdata), tiledmap.width, tiledmap.height
+  end
+
+  local function read_font(fontconf)
+    fontconf.image_data, fontconf.image_width, fontconf.image_height = assert(read_indexed_ppm_image(fontconf.image))
+    return fontconf
+  end
+
+  -- default configs
+  neco_tilesize = opts.tilesize or 8
+
+  -- gfx and palette
+  if opts.gfx then
+    neco_gfxdata, neco_gfxwidth, neco_gfxheight, neco_palette = assert(read_indexed_ppm_image(opts.gfx))
+    neco_palette_size = #neco_palette+1
+  else
+    neco_palette = opts.pal or {
+      [0] = 0x000000,
+      [1] = 0xe0f8cf,
+      [2] = 0x86c06c,
+      [3] = 0x306850,
+      [4] = 0x071821,
+    }
+    neco_palette_size = #neco_palette+1
+  end
+
+  -- map
+  if opts.map then
+    neco_mapdata, neco_mapwidth, neco_mapheight = read_tiled_map(opts.map)
+  else
+    neco_mapdata, neco_mapwidth, neco_mapheight = '', 0, 0
+  end
+
+  -- font
+  neco_font = read_font(opts.font)
+
+  local function conv_data_to_1bit(data)
+    local res = {}
+    for i=1,#data,8 do
+      local v = 0
+      for j=i,math.min(i+7,#data) do
+        if data:sub(j,j):byte() ~= 0 then
+          v = v | (1 << (j - i))
+        end
+      end
+      table.insert(res, v)
+    end
+    return res
+  end
+
+  local function conv_data_to_2bit(data)
+    local res = {}
+    for i=1,#data,4 do
+      local v = 0
+      for j=i,math.min(i+3,#data) do
+        local b = data:sub(j,j):byte()
+        if b ~= 0 then
+          v = v | ((b-1) << 2*(j-i))
+        end
+      end
+      table.insert(res, v)
+    end
+    return res
+  end
+
+  local function conv_data_to_4bit(data)
+    local res = {}
+    for i=1,#data,2 do
+      local v = 0
+      local l, r = data:sub(i,i):byte(), data:sub(i+1,i+1):byte()
+      if l < 16 then v = v | l end
+      if r < 16 then v = v | (r << 4) end
+      table.insert(res, v)
+    end
+    return res
+  end
+]==]
+
+  global neco = @record{}
+  global neco.tilesize <comptime> = #[neco_tilesize]#
+  global neco.gfxwidth <comptime> = #[neco_gfxwidth]#
+  global neco.gfxheight <comptime> = #[neco_gfxheight]#
+  global neco.mapwidth <comptime> = #[neco_mapwidth]#
+  global neco.mapheight <comptime> = #[neco_mapheight]#
+  global neco.altpalette: [#[neco_palette_size]#]byte
+
+  global neco.camera: record{x: integer, y: integer}
+  global neco.gfxopaque: []byte = #[conv_data_to_1bit(neco_gfxdata)]#
+  global neco.gfxpixels: []byte = #[conv_data_to_2bit(neco_gfxdata, true)]#
+  global neco.map: []byte = #[conv_data_to_4bit(neco_mapdata)]#
+  global neco.fontpixels: []byte = #[conv_data_to_1bit(neco_font.image_data)]#
+
+  ## for i=0,#neco_palette do
+    ## if i ~= 0 then
+      PALETTE[#[i-1]#] = #[neco_palette[i]]#
+    ## end
+    neco.altpalette[#[i]#] = #[i]#
+  ## end
+
+  global BTN_LEFT: integer <comptime> = 0
+  global BTN_RIGHT: integer <comptime> = 1
+  global BTN_UP: integer <comptime> = 2
+  global BTN_DOWN: integer <comptime> = 3
+  global BTN_O: integer <comptime> = 4
+  global BTN_X: integer <comptime> = 5
+  global BTN_MOUSE_LEFT: integer <comptime> = 6
+  global BTN_MOUSE_RIGHT: integer <comptime> = 7
+  global BTN_MOUSE_MIDDLE: integer <comptime> = 8
+
+  global C4:  float32 <comptime> = 261.63
+  global Cs4: float32 <comptime> = 277.18
+  global D4:  float32 <comptime> = 293.66
+  global Ds4: float32 <comptime> = 311.13
+  global E4:  float32 <comptime> = 329.63
+  global F4:  float32 <comptime> = 349.23
+  global Fs4: float32 <comptime> = 369.99
+  global G4:  float32 <comptime> = 392.00
+  global Gs4: float32 <comptime> = 415.30
+  global A4:  float32 <comptime> = 440.00
+  global As4: float32 <comptime> = 466.16
+  global B4:  float32 <comptime> = 493.88
+  global C5:  float32 <comptime> = C4*2
+  global Cs5: float32 <comptime> = Cs4*2
+  global D5:  float32 <comptime> = D4*2
+  global Ds5: float32 <comptime> = Ds4*2
+  global E5:  float32 <comptime> = E4*2
+  global F5:  float32 <comptime> = F4*2
+  global Fs5: float32 <comptime> = Fs4*2
+  global G5:  float32 <comptime> = G4*2
+  global Gs5: float32 <comptime> = Gs4*2
+  global A5:  float32 <comptime> = A4*2
+  global As5: float32 <comptime> = As4*2
+  global B5:  float32 <comptime> = B4*2
+
+  local function read1bit(bytes: *[0]byte, i: uint32): byte <inline>
+    return (bytes[i // 8] >> (i % 8)) & 0b1
+  end
+
+  local function read2bit(bytes: *[0]byte, i: uint32): byte <inline>
+    return (bytes[i // 4] >> (2 * (i % 4))) & 0b11
+  end
+
+  local function read4bit(bytes: *[0]byte, i: uint32): byte <inline>
+    return (bytes[i // 2] >> (4 * (i % 2))) & 0b1111
+  end
+
+  -- Clear screen
+  global function cls(col: byte)
+    if col > 0 then col = col - 1 end
+    local col: byte = col | col << 2 | col << 4 | col << 6
+    memory.set(FRAMEBUFFER, col, SCREEN_SIZE * SCREEN_SIZE // 4)
+  end
+
+  -- Change current drawing color palette
+  global function pal(col: opt_scalar_concept, newcol: opt_scalar_concept)
+    ## if not col.type.is_niltype then
+    local col: byte = math.ifloor(col) % #neco.altpalette
+    ## end
+    ## if not newcol.type.is_niltype then
+    local newcol: byte = math.ifloor(newcol) % #neco.altpalette
+    ## end
+    ## if col.type.is_niltype then
+      for i=0,<#neco.altpalette do
+        neco.altpalette[i] = i
+      end
+    ## else
+      neco.altpalette[col] = newcol
+    ## end
+  end
+
+  -- Set a pixel in the screen
+  local function _pset(x: int32, y: int32, col: uint8)
+    local i = (@uint32)(y*SCREEN_SIZE + x) // 4
+    local l = 2*(x%4)
+    FRAMEBUFFER[i] = (FRAMEBUFFER[i] & ~(0b11_u8 << l)) | ((col - 1) << l)
+  end
+
+  --[[
+  Draw sprite n (0..255) at position x, y.
+  Color 0 drawn as transparent by default.
+  flip_x=true to flip horizontally
+  flip_y=true to flip vertically
+  ]]
+  global function spr(n: integer,
+                      x: scalar_concept, y: scalar_concept,
+                      w: scalar_concept, h: scalar_concept,
+                      flip_x: boolean,
+                      flip_y: boolean)
+    if unlikely(n < 0 or n >= neco.gfxwidth*neco.gfxheight) then return end
+    local x, y = (@integer)(x), (@integer)(y)
+    local w = (@integer)(w)*neco.tilesize
+    local h = (@integer)(h)*neco.tilesize
+    local hcount: uinteger <comptime> = (neco.gfxwidth // neco.tilesize)
+    local isx = ((@uinteger)(n) % hcount) * neco.tilesize
+    local isy = ((@uinteger)(n) // hcount) * neco.tilesize
+    local idx = x + neco.camera.x
+    local idy = y + neco.camera.y
+    -- horizontal flip
+    local sxf = 1
+    if flip_x then
+      sxf = -1
+      isx = isx + w - 1
+    end
+    -- vertical flip
+    local syf = 1
+    if flip_y then
+      syf = -1
+      isy = isy + h - 1
+    end
+    -- clip out of bounds width
+    if idx < 0 then w = w+idx; isx = isx-idx*sxf; idx = 0 end
+    local idxa = idx+w - SCREEN_SIZE
+    if idxa > 0 then w = w - idxa end
+    -- clip out of bounds height
+    if idy < 0 then h = h+idy; isy = isy-idy*syf; idy = 0 end
+    local idya = idy+h - SCREEN_SIZE
+    if idya > 0 then h = h - idya end
+    -- -- clipped away?
+    if h < 0 or w < 0 then return end
+    -- blit
+    for iy=0,<h do
+      local sy = isy + iy*syf
+      local dy = idy + iy
+      for ix=0,<w do
+        local sx = isx + ix*sxf
+        local dx = idx + ix
+        local i = sy * neco.gfxwidth + sx
+        if read1bit(neco.gfxopaque, i) == 1 then
+          _pset(dx, dy, neco.altpalette[1+read2bit(neco.gfxpixels, i)])
+        end
+      end
+    end
+  end
+
+  global ToneDesc = @record{
+    start_frequency: float32,
+    end_frequency: float32,
+    attack: uint32,
+    release: uint32,
+    decay: uint32,
+    sustain: uint32,
+    mode: byte,
+    channel: byte,
+    volume: byte
+  }
+
+  -- Play a tone
+  global function tonex(desc: ToneDesc)
+    tone((@uint32)(math.round(desc.end_frequency)) << 16 | (@uint32)(math.round(desc.start_frequency)),
+         desc.sustain | desc.release << 8 | desc.decay << 16 | desc.attack << 24,
+         desc.volume, desc.channel | desc.mode)
+  end
+
+  -- Draws a pixel
+  global function pset(x: scalar_concept, y: scalar_concept, col: byte)
+    local x, y = neco.camera.x+(@integer)(x), neco.camera.y+(@integer)(y)
+    if unlikely(x < 0 or y < 0 or x >= SCREEN_SIZE or y >= SCREEN_SIZE) then return end
+    col = neco.altpalette[col % #neco.altpalette]
+    _pset(x, y, col)
+  end
+
+  -- Change camera drawing offset
+  global function camera(x: scalar_concept, y: scalar_concept)
+    neco.camera.x = -(@integer)(x)
+    neco.camera.y = -(@integer)(y)
+  end
+
+  -- Draws a rectangle
+  global function rectfill(x0: scalar_concept, y0: scalar_concept, x1: scalar_concept, y1: scalar_concept, col: byte)
+    local x0, y0 = math.clamp((@integer)(neco.camera.x+x0), 0, SCREEN_SIZE-1), math.clamp((@integer)(neco.camera.y+y0), 0, SCREEN_SIZE-1)
+    local x1, y1 = math.clamp((@integer)(neco.camera.x+x1), 0, SCREEN_SIZE-1), math.clamp((@integer)(neco.camera.y+y1), 0, SCREEN_SIZE-1)
+    col = neco.altpalette[col % #neco.altpalette]
+    for y=y0,y1 do
+      for x=x0,x1 do
+        _pset(x, y, col)
+      end
+    end
+  end
+
+  -- Draws a circle
+  global function circfill(x: number, y: number, r: number, col: byte)
+    if unlikely(r < 0) then return end
+    if r < 1 then
+      pset(x, y, col)
+      return
+    end
+    col = neco.altpalette[col % #neco.altpalette]
+    x, y = neco.camera.x+x, neco.camera.y+y
+    local sy, sx = -r, -r
+    local ey, ex = r, r
+    if y < r then sy = -y end
+    if x < r then sx = -x end
+    if y+r >= SCREEN_SIZE then ey = SCREEN_SIZE - y end
+    if x+r >= SCREEN_SIZE then ex = SCREEN_SIZE - x end
+    sy, sx, ey, ex = sy+0.5, sx+0.5, ey-0.5, ex-0.5
+    local r2 = r*r
+    for iy=sy,ey do
+      local iy2 = iy*iy
+      for ix=sx,ex do
+        local ix2 = ix*ix
+        if ix2+iy2 <= r2 then
+          local dx, dy = x + ix, y +iy
+          _pset((@integer)(dx), (@integer)(dy), col)
+        end
+      end
+    end
+  end
+
+  -- Draws a font glyph (character)
+  global function glyph(n: byte, x: scalar_concept, y: scalar_concept, col: byte, size: integer)
+    local x, y = (@integer)(x), (@integer)(y)
+    if unlikely(n < 32 or n >= 128) then return end
+    n = n - 32
+    local hcount <comptime> = #[neco_font.image_width // neco_font.glyph_xadvance]#
+    local isx, isy = (n % hcount) * #[neco_font.glyph_xadvance]#, (n // hcount) * #[neco_font.glyph_yadvance]#
+    local idx, idy = x + neco.camera.x, y + neco.camera.y
+    local w = #[neco_font.glyph_width]#
+    local h = #[neco_font.glyph_yadvance]#
+    local dcol = neco.altpalette[col % #neco.altpalette]
+    if size == 1 then
+      -- clip out of bounds width
+      if idx < 0 then w, isx, idx = w+idx, isx-idx, 0 end
+      local idxa = idx+w - SCREEN_SIZE
+      if idxa > 0 then w = w - idxa end
+      -- clip out of bounds height
+      if idy < 0 then h, isy, idy = h+idy, isy-idy, 0 end
+      local idya = idy+h - SCREEN_SIZE
+      if idya > 0 then h = h - idya end
+      -- -- clipped away?
+      if h < 0 or w < 0 then return end
+      -- blit
+      for iy=0,<h do
+        local sy = isy + iy
+        local dy = idy + iy
+        for ix=0,<w do
+          local sx = isx + ix
+          local dx = idx + ix
+          if read1bit(neco.fontpixels, sy*#[neco_font.image_width]# + sx) == 1 then
+            _pset(dx, dy, dcol)
+          end
+        end
+      end
+    else
+      for iy=0,<h do
+        local sy = isy + iy
+        local dy = idy + iy*size
+        for ix=0,<w do
+          local sx = isx + ix
+          local dx = idx + ix*size
+          if read1bit(neco.fontpixels, sy*#[neco_font.image_width]# + sx) == 1 then
+            for py=dy,<dy+size do
+              if unlikely(py < 0 or py >= SCREEN_SIZE) then continue end
+              for px=dx,<dx+size do
+                if unlikely(px < 0 or px >= SCREEN_SIZE) then continue end
+                _pset(px, py, dcol)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- Draw a text
+  global function ptext(msg: string, x: scalar_concept, y: scalar_concept, col: byte, size: integer)
+    for i=0,<msg.size do
+      local n = msg.data[i]
+      glyph(n, x, y, col, size)
+      x = x + #[neco_font.glyph_width + neco_font.glyph_xspacing]#*size
+    end
+  end
+
+  -- Get map tile id at (x,y)
+  global function mget(x: scalar_concept, y: scalar_concept): uint8
+    local x, y = (@integer)(x), (@integer)(y)
+    if unlikely(x < 0 or y < 0 or x >= neco.mapwidth or y >= neco.mapheight) then return 0 end
+    return read4bit(neco.map, y*neco.mapwidth + x)
+  end
+
+  local prev_gamepad: uint8
+  local prev_mouse: uint8
+
+  -- Checks if a button is down.
+  global function btn(key: integer): boolean
+    local gamepad = $GAMEPAD1
+    local mouse = $MOUSE_BUTTONS
+    switch key do
+      case 0 then return gamepad & BUTTON_LEFT ~= 0
+      case 1 then return gamepad & BUTTON_RIGHT ~= 0
+      case 2 then return gamepad & BUTTON_UP ~= 0
+      case 3 then return gamepad & BUTTON_DOWN ~= 0
+      case 4 then return gamepad & BUTTON_2 ~= 0
+      case 5 then return gamepad & BUTTON_1 ~= 0
+      case 6 then return mouse & MOUSE_LEFT ~= 0
+      case 7 then return mouse & MOUSE_RIGHT ~= 0
+      case 8 then return mouse & MOUSE_MIDDLE ~= 0
+    end
+    return false
+  end
+
+  -- Checks if a button was pressed.
+  global function btnp(key: integer): boolean
+    local gamepad = $GAMEPAD1
+    local mouse = $MOUSE_BUTTONS
+    switch key do
+      case 0 then return gamepad & BUTTON_LEFT ~= 0 and prev_gamepad & BUTTON_LEFT == 0
+      case 1 then return gamepad & BUTTON_RIGHT ~= 0 and prev_gamepad & BUTTON_RIGHT == 0
+      case 2 then return gamepad & BUTTON_UP ~= 0 and prev_gamepad & BUTTON_UP == 0
+      case 3 then return gamepad & BUTTON_DOWN ~= 0 and prev_gamepad & BUTTON_DOWN == 0
+      case 4 then return gamepad & BUTTON_2 ~= 0 and prev_gamepad & BUTTON_2 == 0
+      case 5 then return gamepad & BUTTON_1 ~= 0 and prev_gamepad & BUTTON_1 == 0
+      case 6 then return mouse & MOUSE_LEFT ~= 0 and prev_mouse & MOUSE_LEFT == 0
+      case 7 then return mouse & MOUSE_RIGHT ~= 0 and prev_mouse & MOUSE_RIGHT == 0
+      case 8 then return mouse & MOUSE_MIDDLE ~= 0 and prev_mouse & MOUSE_MIDDLE == 0
+    end
+    return false
+  end
+
+## end
+
+## function neco_run()
+  ## if symbols._init then
+    _init()
+  ## end
+
+  local function frame()
+    ## if symbols._update then
+      _update()
+    ## end
+    ## if symbols._draw then
+      _draw()
+    ## end
+    prev_gamepad = $GAMEPAD1
+    prev_mouse = $MOUSE_BUTTONS
+  end
+
+  ## setup_wasm4_callbacks(frame)
+## end
