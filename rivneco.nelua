@@ -1,5 +1,5 @@
 -- Minimal framework for WASM4
-require '.wasm4'
+require 'riv'
 require 'math'
 require 'memory'
 
@@ -78,19 +78,8 @@ require 'memory'
   neco_tilesize = opts.tilesize or 8
 
   -- gfx and palette
-  if opts.gfx then
-    neco_gfxdata, neco_gfxwidth, neco_gfxheight, neco_palette = assert(read_indexed_ppm_image(opts.gfx))
-    neco_palette_size = #neco_palette+1
-  else
-    neco_palette = opts.pal or {
-      [0] = 0x000000,
-      [1] = 0xe0f8cf,
-      [2] = 0x86c06c,
-      [3] = 0x306850,
-      [4] = 0x071821,
-    }
-    neco_palette_size = #neco_palette+1
-  end
+  neco_gfxdata, neco_gfxwidth, neco_gfxheight, neco_palette = assert(read_indexed_ppm_image(opts.gfx))
+  neco_palette_size = #neco_palette+1
 
   -- map
   if opts.map then
@@ -102,42 +91,10 @@ require 'memory'
   -- font
   neco_font = read_font(opts.font)
 
-  local function conv_data_to_1bit(data)
+  local function conv_data_to_8bit(data)
     local res = {}
-    for i=1,#data,8 do
-      local v = 0
-      for j=i,math.min(i+7,#data) do
-        if data:sub(j,j):byte() ~= 0 then
-          v = v | (1 << (j - i))
-        end
-      end
-      table.insert(res, v)
-    end
-    return res
-  end
-
-  local function conv_data_to_2bit(data)
-    local res = {}
-    for i=1,#data,4 do
-      local v = 0
-      for j=i,math.min(i+3,#data) do
-        local b = data:sub(j,j):byte()
-        if b ~= 0 then
-          v = v | ((b-1) << 2*(j-i))
-        end
-      end
-      table.insert(res, v)
-    end
-    return res
-  end
-
-  local function conv_data_to_4bit(data)
-    local res = {}
-    for i=1,#data,2 do
-      local v = 0
-      local l, r = data:sub(i,i):byte(), data:sub(i+1,i+1):byte()
-      if l < 16 then v = v | l end
-      if r < 16 then v = v | (r << 4) end
+    for i=1,#data do
+      local v = data:sub(i,i):byte()
       table.insert(res, v)
     end
     return res
@@ -145,6 +102,7 @@ require 'memory'
 ]==]
 
   global neco = @record{}
+  global neco.riv: *riv_context
   global neco.tilesize <comptime> = #[neco_tilesize]#
   global neco.gfxwidth <comptime> = #[neco_gfxwidth]#
   global neco.gfxheight <comptime> = #[neco_gfxheight]#
@@ -153,17 +111,13 @@ require 'memory'
   global neco.altpalette: [#[neco_palette_size]#]byte
 
   global neco.camera: record{x: integer, y: integer}
-  global neco.gfxopaque: []byte = #[conv_data_to_1bit(neco_gfxdata)]#
-  global neco.gfxpixels: []byte = #[conv_data_to_2bit(neco_gfxdata, true)]#
-  global neco.map: []byte = #[conv_data_to_4bit(neco_mapdata)]#
-  global neco.fontpixels: []byte = #[conv_data_to_1bit(neco_font.image_data)]#
+  global neco.gfxpixels: []byte = #[conv_data_to_8bit(neco_gfxdata)]#
+  global neco.map: []byte = #[conv_data_to_8bit(neco_mapdata)]#
+  global neco.fontpixels: []byte = #[conv_data_to_8bit(neco_font.image_data)]#
 
-  ## for i=0,#neco_palette do
-    ## if i ~= 0 then
-      PALETTE[#[i-1]#] = #[neco_palette[i]]#
-    ## end
-    neco.altpalette[#[i]#] = #[i]#
-  ## end
+  global SCREEN_WIDTH <comptime> = #[opts.width]#
+  global SCREEN_HEIGHT <comptime> = #[opts.height]#
+  global SCREEN_TARGET_FPS <comptime> = #[opts.target_fps]#
 
   global BTN_LEFT: integer <comptime> = 0
   global BTN_RIGHT: integer <comptime> = 1
@@ -200,23 +154,13 @@ require 'memory'
   global As5: float32 <comptime> = As4*2
   global B5:  float32 <comptime> = B4*2
 
-  local function read1bit(bytes: *[0]byte, i: uint32): byte <inline>
-    return (bytes[i // 8] >> (i % 8)) & 0b1
-  end
-
-  local function read2bit(bytes: *[0]byte, i: uint32): byte <inline>
-    return (bytes[i // 4] >> (2 * (i % 4))) & 0b11
-  end
-
-  local function read4bit(bytes: *[0]byte, i: uint32): byte <inline>
-    return (bytes[i // 2] >> (4 * (i % 2))) & 0b1111
-  end
-
   -- Clear screen
-  global function cls(col: byte)
-    if col > 0 then col = col - 1 end
-    local col: byte = col | col << 2 | col << 4 | col << 6
-    memory.set(FRAMEBUFFER, col, SCREEN_SIZE * SCREEN_SIZE // 4)
+  global function cls(col: opt_scalar_concept)
+    memory.set(neco.riv.framebuffer, col, SCREEN_WIDTH * SCREEN_HEIGHT)
+  end
+
+  global function quit()
+    neco.riv.quit = true
   end
 
   -- Change current drawing color palette
@@ -237,10 +181,9 @@ require 'memory'
   end
 
   -- Set a pixel in the screen
-  local function _pset(x: int32, y: int32, col: uint8)
-    local i = (@uint32)(y*SCREEN_SIZE + x) // 4
-    local l = 2*(x%4)
-    FRAMEBUFFER[i] = (FRAMEBUFFER[i] & ~(0b11_u8 << l)) | ((col - 1) << l)
+  local function _pset(x: int32, y: int32, col: uint8) <inline>
+    local i = (@uint32)(y*SCREEN_WIDTH + x)
+    neco.riv.framebuffer[i] = col
   end
 
   --[[
@@ -277,11 +220,11 @@ require 'memory'
     end
     -- clip out of bounds width
     if idx < 0 then w = w+idx; isx = isx-idx*sxf; idx = 0 end
-    local idxa = idx+w - SCREEN_SIZE
+    local idxa = idx+w - SCREEN_WIDTH
     if idxa > 0 then w = w - idxa end
     -- clip out of bounds height
     if idy < 0 then h = h+idy; isy = isy-idy*syf; idy = 0 end
-    local idya = idy+h - SCREEN_SIZE
+    local idya = idy+h - SCREEN_HEIGHT
     if idya > 0 then h = h - idya end
     -- -- clipped away?
     if h < 0 or w < 0 then return end
@@ -293,48 +236,41 @@ require 'memory'
         local sx = isx + ix*sxf
         local dx = idx + ix
         local i = sy * neco.gfxwidth + sx
-        if read1bit(neco.gfxopaque, i) == 1 then
-          _pset(dx, dy, neco.altpalette[1+read2bit(neco.gfxpixels, i)])
+        local c = neco.gfxpixels[i]
+        if c ~= 0 then
+          _pset(dx, dy, neco.altpalette[c])
         end
       end
     end
   end
 
   global WaveType = @enum(byte) {
-    SQUARE = 0,
-    SAW,
-    TRIANGLE,
-    NOISE,
+    SINE = RIV_WAVEFORM_SINE,
+    SQUARE = RIV_WAVEFORM_SQUARE,
+    TRIANGLE = RIV_WAVEFORM_TRIANGLE,
+    SAWTOOTH = RIV_WAVEFORM_SAWTOOTH,
+    PULSE = RIV_WAVEFORM_PULSE,
+    NOISE = RIV_WAVEFORM_NOISE,
   }
-  global ToneDesc = @record{
-    start_frequency: float32,
-    end_frequency: float32,
-    volume: float32,
-    attack: uint32,
-    release: uint32,
-    decay: uint32,
-    sustain: uint32,
-    wave_type: WaveType
-  }
+  global ToneDesc = @riv_waveform_desc
 
   -- Play a tone
-  global function tonex(desc: ToneDesc)
-    local channel: uint8, mode: uint8 = 0, 0
-    switch desc.wave_type do
-      case WaveType.SQUARE then channel=TONE_PULSE1 mode=TONE_MODE3
-      case WaveType.SAW then channel=TONE_PULSE2 mode=TONE_MODE4
-      case WaveType.TRIANGLE then channel=TONE_TRIANGLE
-      case WaveType.NOISE then channel=TONE_NOISE
-    end
-    tone((@uint32)(math.round(desc.end_frequency)) << 16 | (@uint32)(math.round(desc.start_frequency)),
-         desc.sustain | desc.release << 8 | desc.decay << 16 | desc.attack << 24,
-         math.iceil(desc.volume * 100), channel | mode)
+  global function tonex(tone: ToneDesc): uint64
+    tone.attack = tone.attack / 60
+    tone.decay = tone.decay / 60
+    tone.sustain = tone.sustain / 60
+    tone.release = tone.release / 60
+    return neco.riv:waveform(&tone)
+  end
+
+  global function stoptone(tone_id: uint64)
+    return neco.riv:sound(&riv_sound_desc{id=tone_id, seek=-1})
   end
 
   -- Draws a pixel
   global function pset(x: scalar_concept, y: scalar_concept, col: byte)
     local x, y = neco.camera.x+(@integer)(x), neco.camera.y+(@integer)(y)
-    if unlikely(x < 0 or y < 0 or x >= SCREEN_SIZE or y >= SCREEN_SIZE) then return end
+    if unlikely(x < 0 or y < 0 or x >= SCREEN_WIDTH or y >= SCREEN_HEIGHT) then return end
     col = neco.altpalette[col % #neco.altpalette]
     _pset(x, y, col)
   end
@@ -347,12 +283,18 @@ require 'memory'
 
   -- Draws a rectangle
   global function rectfill(x0: scalar_concept, y0: scalar_concept, x1: scalar_concept, y1: scalar_concept, col: byte)
-    local x0, y0 = math.clamp((@integer)(neco.camera.x+x0), 0, SCREEN_SIZE-1), math.clamp((@integer)(neco.camera.y+y0), 0, SCREEN_SIZE-1)
-    local x1, y1 = math.clamp((@integer)(neco.camera.x+x1), 0, SCREEN_SIZE-1), math.clamp((@integer)(neco.camera.y+y1), 0, SCREEN_SIZE-1)
+    local x0, y0 = math.clamp((@integer)(neco.camera.x+x0), 0, SCREEN_WIDTH-1), math.clamp((@integer)(neco.camera.y+y0), 0, SCREEN_HEIGHT-1)
+    local x1, y1 = math.clamp((@integer)(neco.camera.x+x1), 0, SCREEN_WIDTH-1), math.clamp((@integer)(neco.camera.y+y1), 0, SCREEN_HEIGHT-1)
+    local pitch = x1+1-x0
     col = neco.altpalette[col % #neco.altpalette]
-    for y=y0,y1 do
-      for x=x0,x1 do
-        _pset(x, y, col)
+    if pitch == SCREEN_WIDTH then
+      local h = y1+1-y0
+      memory.set(&neco.riv.framebuffer[y0*SCREEN_WIDTH + x0], col, SCREEN_WIDTH*h)
+    else
+      for y=y0,y1 do
+        for x=x0,x1 do
+          _pset(x, y, col)
+        end
       end
     end
   end
@@ -370,8 +312,8 @@ require 'memory'
     local ey, ex = r, r
     if y < r then sy = -y end
     if x < r then sx = -x end
-    if y+r >= SCREEN_SIZE then ey = SCREEN_SIZE - y end
-    if x+r >= SCREEN_SIZE then ex = SCREEN_SIZE - x end
+    if y+r >= SCREEN_HEIGHT then ey = SCREEN_HEIGHT - y end
+    if x+r >= SCREEN_WIDTH then ex = SCREEN_WIDTH - x end
     sy, sx, ey, ex = sy+0.5, sx+0.5, ey-0.5, ex-0.5
     local r2 = r*r
     for iy=sy,ey do
@@ -400,11 +342,11 @@ require 'memory'
     if size == 1 then
       -- clip out of bounds width
       if idx < 0 then w, isx, idx = w+idx, isx-idx, 0 end
-      local idxa = idx+w - SCREEN_SIZE
+      local idxa = idx+w - SCREEN_WIDTH
       if idxa > 0 then w = w - idxa end
       -- clip out of bounds height
       if idy < 0 then h, isy, idy = h+idy, isy-idy, 0 end
-      local idya = idy+h - SCREEN_SIZE
+      local idya = idy+h - SCREEN_HEIGHT
       if idya > 0 then h = h - idya end
       -- -- clipped away?
       if h < 0 or w < 0 then return end
@@ -415,7 +357,7 @@ require 'memory'
         for ix=0,<w do
           local sx = isx + ix
           local dx = idx + ix
-          if read1bit(neco.fontpixels, sy*#[neco_font.image_width]# + sx) == 1 then
+          if neco.fontpixels[sy*#[neco_font.image_width]# + sx] ~= 0 then
             _pset(dx, dy, dcol)
           end
         end
@@ -427,11 +369,11 @@ require 'memory'
         for ix=0,<w do
           local sx = isx + ix
           local dx = idx + ix*size
-          if read1bit(neco.fontpixels, sy*#[neco_font.image_width]# + sx) == 1 then
+          if neco.fontpixels[sy*#[neco_font.image_width]# + sx] ~= 0 then
             for py=dy,<dy+size do
-              if unlikely(py < 0 or py >= SCREEN_SIZE) then continue end
+              if unlikely(py < 0 or py >= SCREEN_HEIGHT) then continue end
               for px=dx,<dx+size do
-                if unlikely(px < 0 or px >= SCREEN_SIZE) then continue end
+                if unlikely(px < 0 or px >= SCREEN_WIDTH) then continue end
                 _pset(px, py, dcol)
               end
             end
@@ -454,44 +396,31 @@ require 'memory'
   global function mget(x: scalar_concept, y: scalar_concept): uint8
     local x, y = (@integer)(x), (@integer)(y)
     if unlikely(x < 0 or y < 0 or x >= neco.mapwidth or y >= neco.mapheight) then return 0 end
-    return read4bit(neco.map, y*neco.mapwidth + x)
+    return neco.map[y*neco.mapwidth + x]
   end
-
-  local prev_gamepad: uint8
-  local prev_mouse: uint8
 
   -- Checks if a button is down.
   global function btn(key: integer): boolean
-    local gamepad = $GAMEPAD1
-    local mouse = $MOUSE_BUTTONS
     switch key do
-      case 0 then return gamepad & BUTTON_LEFT ~= 0
-      case 1 then return gamepad & BUTTON_RIGHT ~= 0
-      case 2 then return gamepad & BUTTON_UP ~= 0
-      case 3 then return gamepad & BUTTON_DOWN ~= 0
-      case 4 then return gamepad & BUTTON_2 ~= 0
-      case 5 then return gamepad & BUTTON_1 ~= 0
-      case 6 then return mouse & MOUSE_LEFT ~= 0
-      case 7 then return mouse & MOUSE_RIGHT ~= 0
-      case 8 then return mouse & MOUSE_MIDDLE ~= 0
+      case 0 then return neco.riv.keys[RIV_KEYCODE_LEFT].press
+      case 1 then return neco.riv.keys[RIV_KEYCODE_RIGHT].press
+      case 2 then return neco.riv.keys[RIV_KEYCODE_UP].press
+      case 3 then return neco.riv.keys[RIV_KEYCODE_DOWN].press
+      case 4 then return neco.riv.keys[RIV_KEYCODE_Z].press
+      case 5 then return neco.riv.keys[RIV_KEYCODE_X].press
     end
     return false
   end
 
   -- Checks if a button was pressed.
   global function btnp(key: integer): boolean
-    local gamepad = $GAMEPAD1
-    local mouse = $MOUSE_BUTTONS
     switch key do
-      case 0 then return gamepad & BUTTON_LEFT ~= 0 and prev_gamepad & BUTTON_LEFT == 0
-      case 1 then return gamepad & BUTTON_RIGHT ~= 0 and prev_gamepad & BUTTON_RIGHT == 0
-      case 2 then return gamepad & BUTTON_UP ~= 0 and prev_gamepad & BUTTON_UP == 0
-      case 3 then return gamepad & BUTTON_DOWN ~= 0 and prev_gamepad & BUTTON_DOWN == 0
-      case 4 then return gamepad & BUTTON_2 ~= 0 and prev_gamepad & BUTTON_2 == 0
-      case 5 then return gamepad & BUTTON_1 ~= 0 and prev_gamepad & BUTTON_1 == 0
-      case 6 then return mouse & MOUSE_LEFT ~= 0 and prev_mouse & MOUSE_LEFT == 0
-      case 7 then return mouse & MOUSE_RIGHT ~= 0 and prev_mouse & MOUSE_RIGHT == 0
-      case 8 then return mouse & MOUSE_MIDDLE ~= 0 and prev_mouse & MOUSE_MIDDLE == 0
+      case 0 then return neco.riv.keys[RIV_KEYCODE_LEFT].down
+      case 1 then return neco.riv.keys[RIV_KEYCODE_RIGHT].down
+      case 2 then return neco.riv.keys[RIV_KEYCODE_UP].down
+      case 3 then return neco.riv.keys[RIV_KEYCODE_DOWN].down
+      case 4 then return neco.riv.keys[RIV_KEYCODE_Z].down
+      case 5 then return neco.riv.keys[RIV_KEYCODE_X].down
     end
     return false
   end
@@ -499,20 +428,42 @@ require 'memory'
 ## end
 
 ## function neco_run()
-  ## if symbols._init then
-    _init()
-  ## end
+  local function init(ctx: *riv_context)
+    neco.riv = ctx
 
-  local function frame()
+    ## for i=0,#neco_palette do
+      local c = #[neco_palette[i]]#
+      c = (((c >>  0) & 0xff) << 16) |
+          (((c >>  8) & 0xff) <<  8) |
+          (((c >> 16) & 0xff) <<  0)
+      neco.riv.palette[#[i]#] = c
+      neco.altpalette[#[i]#] = #[i]#
+    ## end
+
+    ## if symbols._init then
+      _init()
+    ## end
+  end
+
+  local function frame(ctx: *riv_context)
     ## if symbols._update then
       _update()
     ## end
     ## if symbols._draw then
       _draw()
     ## end
-    prev_gamepad = $GAMEPAD1
-    prev_mouse = $MOUSE_BUTTONS
   end
 
-  ## setup_wasm4_callbacks(frame)
+  riv_run(&(@riv_run_desc){
+    init_cb = init,
+    frame_cb = frame,
+    framebuffer_desc = {
+      width = SCREEN_WIDTH,
+      height = SCREEN_HEIGHT,
+      target_fps = SCREEN_TARGET_FPS,
+      pixel_format = RIV_PIXELFORMAT_PAL256,
+    }
+  })
+
+  -- ## nostartfiles()
 ## end

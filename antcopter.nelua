@@ -1,37 +1,32 @@
+##[[
 -- Replace default primitives (shrinks about 113 bytes)
--- WARNING: Default integer maximum will be dropped to 2^31-1.
-## primtypes.uinteger = primtypes.uint32
-## primtypes.integer = primtypes.int32
-## primtypes.number = primtypes.float32
+-- primtypes.uinteger = primtypes.uint32
+-- primtypes.integer = primtypes.int32
+primtypes.number = primtypes.float32
 
 -- Disable the GC (shrink about 3976 bytes)
--- WARNING: Allocated memory will need to be deallocated manually.
-## context.rootpragmas.nogc = true
+pragma{nogc = true}
+]]
 
 -- Replace general allocator to use a heap on static memory (shrink about 9295 bytes)
 -- WARNING: Heap memory will be fixed to 32KB, tune to not have out memory errors.
-require 'allocators.heap'
-global embedded_general_allocator: HeapAllocator(32*1024)
-require 'allocators.default'
+-- require 'allocators.heap'
+-- global embedded_general_allocator: HeapAllocator(32*1024)
+-- require 'allocators.default'
 
--- Require Neco framework.
-## if NECO then
-require '.neco'
-## else
-require '.w4neco'
-## end
+require '.rivneco'
 
 require 'vector'
 require 'string'
+require 'math'
 
 ##[==[
 neco_setup({
   width=160, height=160,
   tilesize=8,
-  fps=60,
-  scale=ccinfo.is_wasm and 1 or 4,
-  gfx='assets/jam.ppm',
-  map='assets/jam.lua',
+  target_fps=60,
+  gfx='assets/gfx.ppm',
+  map='assets/map.lua',
   font = {
     glyph_xadvance=8,
     glyph_yadvance=6,
@@ -43,6 +38,21 @@ neco_setup({
   print='ptext',
 })
 ]==]
+
+function math.qsin(x: number): number <inline,nosideeffect>
+  -- Quadratic sin approximation (imprecise), using the following constrains:
+  -- f(0) = 0, f(pi) = 0, f(pi/2) = 1
+  local line = x*#[1/math.pi]#
+  local stair = math.floor(line)
+  local saw = line - stair
+  local wave = 4.0*saw*(1.0-saw)
+  local signal = (1.0-2.0*(stair - 2.0*math.floor(0.5*line)))
+  return signal*wave
+end
+
+function math.qcos(x: number): number <inline,nosideeffect>
+  return math.qsin(x + #[math.pi/2]#)
+end
 
 --------------------------------------------------------------------------------
 -- Vec2
@@ -155,6 +165,7 @@ local function hash22(v: Vec2): Vec2 <inline>
   h = h ~ (h>>16_u)
   return Vec2{h & 0x7fffffff_u, (h*48271_u) & 0x7fffffff_u}*#[1.0/0x7fffffff]#
 end
+
 --------------------------------------------------------------------------------
 -- Types
 
@@ -208,18 +219,20 @@ local Game = @record{
   frame: uint32,
   shake_stop_frame: uint32,
   title_stop_frame: uint32,
+  start_frame: uint32,
   end_frame: uint32,
   level_frame: uint32,
+  music_dispatch_frame: uint32,
   deaths: uint16,
   level: uint8,
   next_level: uint8,
-  score: uint8,
-  level_score: uint8,
+  berries: uint8,
+  level_berries: uint8,
   powerup: boolean,
   level_finished: boolean,
   music_disabled: boolean,
   notes: uint32,
-  busy_channels: [4]uint8
+  music_tones: [128]uint64,
 }
 
 local TILE_SIZE <comptime> = 8
@@ -235,41 +248,35 @@ function Game:spawn_object(id: int16, pos: Vec2): *Object <forwarddecl> end
 
 global function sfx(x: integer)
   local desc: ToneDesc
-  local busy = 0
   switch x do
   case SoundEffectId.Jump then -- jump
-    desc={start_frequency=400, end_frequency=200, sustain=4, release=2, wave_type=WaveType.NOISE, volume=0.3}
+    desc={start_frequency=400, end_frequency=200, sustain=4, release=2, type=WaveType.NOISE, amplitude=0.3}
   case SoundEffectId.Collide then -- collide
-    desc={start_frequency=250, end_frequency=100, sustain=4, release=2, wave_type=WaveType.NOISE, volume=0.3}
+    desc={start_frequency=250, end_frequency=100, sustain=4, release=2, type=WaveType.NOISE, amplitude=0.3}
   case SoundEffectId.WallSlide then -- wall slide
-    desc={start_frequency=490, sustain=6, release=1, wave_type=WaveType.NOISE, volume=0.2}
+    desc={start_frequency=490, sustain=6, release=1, type=WaveType.NOISE, amplitude=0.1}
   case SoundEffectId.Glide then -- glide
-    desc={start_frequency=600, end_frequency=100, sustain=1, release=1, wave_type=WaveType.SQUARE, volume=0.25}
+    desc={start_frequency=1200, end_frequency=200, sustain=1, release=1, type=WaveType.PULSE, amplitude=0.2}
   case SoundEffectId.Death then -- death
-    desc={start_frequency=300, end_frequency=200, sustain=4, release=4, wave_type=WaveType.NOISE, volume=0.4}
+    desc={start_frequency=300, end_frequency=200, sustain=4, release=4, type=WaveType.NOISE, amplitude=0.4}
   case SoundEffectId.Upgrade then -- upgrade fruit
-    desc={start_frequency=220, end_frequency=440*2, sustain=112, release=4, wave_type=WaveType.SQUARE, volume=0.3}
+    desc={start_frequency=220, end_frequency=440*2, sustain=112, release=4, type=WaveType.PULSE, amplitude=0.3}
   case SoundEffectId.Fruit1 then -- fruit 1
-    desc={start_frequency=C4*4, sustain=4, release=2, wave_type=WaveType.SQUARE, volume=0.3}
-    busy = 6
+    desc={start_frequency=C4*4, sustain=4, release=2, type=WaveType.PULSE, amplitude=0.2}
   case SoundEffectId.Fruit2 then -- fruit 2
-    desc={start_frequency=E4*4, sustain=4, release=4, wave_type=WaveType.SQUARE, volume=0.3}
-    busy = 8
+    desc={delay = 1/10, start_frequency=E4*4, sustain=4, release=4, type=WaveType.PULSE, amplitude=0.2}
   case SoundEffectId.Step1 then -- step 1
-    desc={start_frequency=300, end_frequency=400, sustain=1, release=1, wave_type=WaveType.NOISE, volume=0.2}
+    desc={start_frequency=300, end_frequency=400, sustain=1, release=1, type=WaveType.NOISE, amplitude=0.2, pan=-0.3}
   case SoundEffectId.Step2 then -- step 2
-    desc={start_frequency=320, end_frequency=420, sustain=1, release=1, wave_type=WaveType.NOISE, volume=0.2}
+    desc={start_frequency=320, end_frequency=420, sustain=1, release=1, type=WaveType.NOISE, amplitude=0.2, pan=0.3}
   case SoundEffectId.GameStart then -- game start
-    desc={start_frequency=220, end_frequency=440, sustain=60, release=4, wave_type=WaveType.NOISE, volume=0.3}
+    desc={start_frequency=220, end_frequency=440, sustain=60, release=4, type=WaveType.NOISE, amplitude=0.3}
   case SoundEffectId.GameEnd then -- game end
-    desc={start_frequency=220, end_frequency=440*4, sustain=112, release=4, wave_type=WaveType.SQUARE, volume=0.3}
+    desc={start_frequency=220, end_frequency=440*4, sustain=112, release=4, type=WaveType.PULSE, amplitude=0.3}
   else
     return
   end
-  if game.busy_channels[desc.wave_type] == 0 then
-    game.busy_channels[desc.wave_type] = busy
-    tonex(desc)
-  end
+  tonex(desc)
 end
 
 local bass_notes: []float32 = {
@@ -291,37 +298,58 @@ local lead_notes: []float32 = {
   G4, G4, E4, D4, C4, E4, A4, A4, G4, E4, E4, G4, A4, B4, G4, E4,
 }
 
+function Game:stop_music()
+  for _,id in ipairs(self.music_tones) do
+    stoptone(id)
+    if id == 0 then break end
+  end
+  self.music_dispatch_frame = (self.frame + 12) // 12 * 12
+end
+
 function Game:play_music()
   local speed = game.powerup and 8 or 12
-  if self.frame % speed == 0 then
+  if self.frame < self.music_dispatch_frame then return end
+  self.music_dispatch_frame = self.frame + 16*speed
+  local j = 0
+  for i=0,<16 do
+    local delay = (i*speed+2) / 60
     if (self.notes // #bass_notes) % 7 ~= 6 then
-      tonex{
+      self.music_tones[j] = tonex{
+        delay = delay,
         start_frequency = bass_notes[self.notes % #bass_notes] / 4,
-        sustain = speed-2, release = 1,
-        volume = 0.5,
-        wave_type = WaveType.TRIANGLE,
+        attack = 1, sustain = speed-2, release = 1,
+        amplitude = 0.25,
+        type = WaveType.TRIANGLE,
       }
+      j = j + 1
     end
     if self.notes >= #rhythm_notes then
       if (self.notes // #rhythm_notes) % 2 == 1 then
-        tonex{
+        self.music_tones[j] = tonex{
+          delay = delay,
           start_frequency = rhythm_notes[self.notes % #rhythm_notes],
-          sustain = speed-2, release = 1,
-          volume = 0.2,
-          wave_type = WaveType.SAW,
+          attack = 1, sustain = speed-2, release = 1,
+          amplitude = 0.08,
+          duty_cycle = 0.75,
+          type = WaveType.PULSE,
         }
+        j = j + 1
       else
-        tonex{
+        self.music_tones[j] = tonex{
+          delay = delay,
           start_frequency = lead_notes[self.notes % #lead_notes],
-          sustain = speed-2, release = 1,
-          volume = 0.2,
-          wave_type = WaveType.SAW,
+          attack = 1, sustain = speed-2, release = 1,
+          amplitude = 0.08,
+          duty_cycle = 0.75,
+          type = WaveType.PULSE,
         }
+        j = j + 1
       end
     end
     self.notes = self.notes + 1
   end
 end
+
 
 --------------------------------------------------------------------------------
 -- Object
@@ -454,7 +482,6 @@ local PickupEffect = @record{
 function PickupEffect:_update()
   if self.frames == 0 then
     sfx(SoundEffectId.Fruit1)
-  elseif self.frames == 6 then
     sfx(SoundEffectId.Fruit2)
   end
   self.frames = self.frames + 1
@@ -651,7 +678,7 @@ function Player:_update()
     self.vel.y = math.min(self.vel.y + gravity, maxspeed)
   end
   if self.floating then
-    if down_pressed or up_pressed or left_pressed or right_pressed or jump_pressed or accel_pressed then
+    if down_pressed or up_pressed or left_pressed or right_pressed or jump_pressed or accel_pressed or ground then
       self.floating = false
       self.glideframes = 0
       self.vel.y = 0.2
@@ -770,8 +797,8 @@ function Player:_draw()
         oy = oy + 1
       end
       local theta = t*2 + h.x*6.28
-      local col = math.cos(theta) < 0 and 3 or 4
-      local ox = TILE_SIZE/2 + math.sin(theta)*(TILE_SIZE + h.x*2)
+      local col = math.qcos(theta) < 0 and 3 or 4
+      local ox = TILE_SIZE/2 + math.qsin(theta)*(TILE_SIZE + h.x*2)
       rectfill(self.base.pos.x + ox, self.base.pos.y + oy,
                self.base.pos.x + ox+1, self.base.pos.y + oy,  col)
     end
@@ -793,7 +820,7 @@ end
 function Fruit:_update()
   if self.base:collides_with({0,0}, ObjectId.Player) then -- captured
     game:spawn_object(ObjectId.PickupEffect, self.base:bbox():center())
-    game.level_score = game.level_score + 1
+    game.level_berries = game.level_berries + 1
     self.base:add_flag(ObjectFlag.Removed)
   else
     local h = hash11(self.spawn_pos.x*20 + self.spawn_pos.y)
@@ -828,12 +855,12 @@ function Wind:_draw()
     local x, y
     if self.fast_frames > 0 then -- fast wind
       local t = ((self.fast_frames-1) / 60 % 1000)*10 + i*0.3
-      x = self.base.pos.x + TILE_SIZE/2 + math.sin(t + h.x*6.28)*6
+      x = self.base.pos.x + TILE_SIZE/2 + math.qsin(t + h.x*6.28)*6
       local o = TILE_SIZE-(self.base.pos.x + h.y*TILE_SIZE)
       y = self.base.pos.y + TILE_SIZE-(self.base.pos.x + t*8 + h.y*TILE_SIZE) - o
     else
       local t = (game.frame / 60 % 1000)*10 + i*0.3
-      x = self.base.pos.x + TILE_SIZE/2 + math.sin(t + h.x*6.28)*3
+      x = self.base.pos.x + TILE_SIZE/2 + math.qsin(t + h.x*6.28)*3
       y = self.base.pos.y + TILE_SIZE-((self.base.pos.x + t*2 + h.y*TILE_SIZE) % TILE_SIZE)
     end
     circfill(x, y, 0.5, 4)
@@ -974,6 +1001,7 @@ function UpgradeFruit:_update()
     player.freeze = 120
     game.powerup = true
     game.shake_stop_frame = game.frame + 30
+    game:stop_music() -- will start again at higher speed
     self.base:add_flag(ObjectFlag.Removed)
     for i,other in ipairs(game.objects) do -- remove all winds
       if other.id == ObjectId.Wind then
@@ -1010,8 +1038,8 @@ function LevelGoal:_update()
       end
     elseif not game.level_finished then
       game.next_level = game.level + 1
-      game.score = game.score + game.level_score
-      game.level_score = 0
+      game.berries = game.berries + game.level_berries
+      game.level_berries = 0
       game.level_finished = true
       self.base:add_flag(ObjectFlag.Removed)
     end
@@ -1089,7 +1117,7 @@ function Game:load_level(level: int32)
   self.level_finished = false
   self.level = level
   self.level_frame = 0
-  self.level_score = 0
+  self.level_berries = 0
   self.next_level = level
   self.powerup = level > 10
   -- destroy all objects
@@ -1126,30 +1154,55 @@ function Game:update_level()
   end)
 end
 
+function Game:is_at_end(): boolean
+  return self.end_frame ~= 0
+end
+
+function Game:get_frames_score(): uint32
+  if self.start_frame == 0 then return 0 end -- game no started
+  local end_frame: uint32 = self.end_frame ~= 0 and self.end_frame or self.frame
+  return end_frame - self.start_frame
+end
+
+function Game:get_berries_score(): uint32
+  return self.berries + self.level_berries
+end
+
+function Game:get_score(): int64
+  local frames: int64 = self:get_frames_score()
+  local berries: int32 = self:get_berries_score()
+  local score: int64 = berries*600 - self.deaths*300 - frames
+  if game:is_at_end() then
+    score = score + 2400
+  end
+  return score
+end
+
+function Game:save_score(finished: boolean)
+  local finished_str: string = self.end_frame ~= 0 and 'true' or 'false'
+  local frames: int64 = self:get_frames_score()
+  local berries: int32 = self:get_berries_score()
+  local score: int64 = self:get_score()
+  neco.riv.outcard_len = riv_snprintf(neco.riv.inoutbuffer, RIV_MMIOSIZE_INOUTBUFFER,
+    [[JSON{"score":%d,"berries":%u,"frames":%u,"deaths":%u,finished":%s}]],
+      score, berries, frames, self.deaths, finished_str)
+end
+
 function Game:update()
-  -- count priority sound channels
-  for i=0,<#game.busy_channels do
-    if game.busy_channels[i] > 0 then
-      game.busy_channels[i] = game.busy_channels[i] - 1
-    end
-  end
-  if btnp(BTN_MOUSE_RIGHT) then
-    game.music_disabled = not game.music_disabled
-  end
-  -- play music
-  if not game.music_disabled then
-    game:play_music()
-  end
   -- intro screen
   local intro = false
   if game.level == 0 then
     if game.title_stop_frame == 0 and (btn(BTN_X) or btn(BTN_O)) then
       game.title_stop_frame = game.frame + 60
       sfx(SoundEffectId.GameStart)
+      if btnp(BTN_X) then
+        game.music_disabled = true
+      end
       intro = true
     elseif game.title_stop_frame ~= 0 and game.frame >= game.title_stop_frame then
       game:load_level(1)
       game.title_stop_frame = 0
+      game.start_frame = game.frame
       sfx(SoundEffectId.Collide)
       intro = true
     end
@@ -1162,7 +1215,19 @@ function Game:update()
     -- update level
     self:update_level()
   end
+  -- play music
+  if not game.music_disabled then
+    if game.level ~= 0 then
+      game:play_music()
+    end
+  end
+  self:save_score()
   game.frame = game.frame + 1
+
+  -- quit 10 seconds after the game ends
+  if game.end_frame ~= 0 and game.frame >= game.end_frame + 600 then
+    quit()
+  end
 end
 
 function Game:draw_title()
@@ -1188,12 +1253,8 @@ function Game:draw_title()
   end
   -- credits
   ptext('antcopter', 30, 60, 4, 3)
-  ptext('jump to start', 52, 84, 3 + math.ifloor((game.frame/60)*10%2), 1)
-  if game.music_disabled then
-    ptext('right click to enable music', 24, 94, 3 + math.ifloor((game.frame/60)*10%2), 1)
-  else
-    ptext('right click to disable music', 24, 94, 3 + math.ifloor((game.frame/60)*10%2), 1)
-  end
+  ptext('press z to start', 52, 84, 3 + math.ifloor((game.frame/60)*10%2), 1)
+  ptext('press x to start without music', 22, 94, 3 + math.ifloor((game.frame/60)*10%2), 1)
   ptext('a game by', 62, 110, 3, 1)
   ptext('edubart', 66, 120, 1, 1)
   ptext('isabella', 64, 130, 1, 1)
@@ -1220,11 +1281,11 @@ function Game:draw_end_game()
   rectfill(40-4+1, 64-4+1-50, 160-(40-4)-1, 160-(64-4)-1-50, 2)
   ptext('game completed!', 53, 14, 4, 1)
   sb:clear() sb:write('total time: ')
-  write_time(sb, game.end_frame)
+  write_time(sb, self:get_frames_score())
   ptext(sb:view(), 40, 14 + 9, 4, 1)
-  sb:clear() sb:write('total deaths: ') sb:write(game.deaths)
+  sb:clear() sb:write('total deaths: ') sb:write(self.deaths)
   ptext(sb:view(), 40, 14 + 18, 4, 1)
-  sb:clear() sb:write('total fruits: ') sb:write(game.score + game.level_score) sb:write('/80')
+  sb:clear() sb:write('total fruits: ') sb:write(self:get_berries_score()) sb:write('/80')
   ptext(sb:view(), 40, 14 + 27, 4, 1)
 end
 

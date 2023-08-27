@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<tileset version="1.5" tiledversion="1.7.2" name="jam" tilewidth="8" tileheight="8" tilecount="256" columns="11" backgroundcolor="#123551">
- <image source="jam.ppm" trans="000000" width="88" height="40"/>
+<tileset version="1.5" tiledversion="1.7.2" name="gfx" tilewidth="8" tileheight="8" tilecount="256" columns="11" backgroundcolor="#123551">
+ <image source="gfx.ppm" trans="000000" width="88" height="40"/>
  <tile id="11">
   <properties>
    <property name="solid" type="bool" value="true"/>
