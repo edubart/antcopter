@@ -102,7 +102,7 @@ require 'memory'
 ]==]
 
   global neco = @record{}
-  global neco.riv: *riv_context
+  global neco.riv: *riv_context = &riv
   global neco.tilesize <comptime> = #[neco_tilesize]#
   global neco.gfxwidth <comptime> = #[neco_gfxwidth]#
   global neco.gfxheight <comptime> = #[neco_gfxheight]#
@@ -160,7 +160,7 @@ require 'memory'
   end
 
   global function quit()
-    neco.riv.quit = true
+    riv.quit = true
   end
 
   -- Change current drawing color palette
@@ -260,11 +260,11 @@ require 'memory'
     tone.decay = tone.decay / 60
     tone.sustain = tone.sustain / 60
     tone.release = tone.release / 60
-    return neco.riv:waveform(&tone)
+    return riv_waveform(&tone)
   end
 
   global function stoptone(tone_id: uint64)
-    return neco.riv:sound(&riv_sound_desc{id=tone_id, seek=-1})
+    return riv_sound(&riv_sound_desc{id=tone_id, seek=-1})
   end
 
   -- Draws a pixel
@@ -399,28 +399,28 @@ require 'memory'
     return neco.map[y*neco.mapwidth + x]
   end
 
-  -- Checks if a button is down.
+  -- Checks if a button is pressed.
   global function btn(key: integer): boolean
     switch key do
-      case 0 then return neco.riv.keys[RIV_KEYCODE_LEFT].press
-      case 1 then return neco.riv.keys[RIV_KEYCODE_RIGHT].press
-      case 2 then return neco.riv.keys[RIV_KEYCODE_UP].press
-      case 3 then return neco.riv.keys[RIV_KEYCODE_DOWN].press
-      case 4 then return neco.riv.keys[RIV_KEYCODE_Z].press
-      case 5 then return neco.riv.keys[RIV_KEYCODE_X].press
+      case 0 then return neco.riv.keys[RIV_GAMEPAD_LEFT].down
+      case 1 then return neco.riv.keys[RIV_GAMEPAD_RIGHT].down
+      case 2 then return neco.riv.keys[RIV_GAMEPAD_UP].down
+      case 3 then return neco.riv.keys[RIV_GAMEPAD_DOWN].down
+      case 4 then return neco.riv.keys[RIV_GAMEPAD_A1].down
+      case 5 then return neco.riv.keys[RIV_GAMEPAD_A2].down
     end
     return false
   end
 
-  -- Checks if a button was pressed.
+  -- Checks if a button was just pressed.
   global function btnp(key: integer): boolean
     switch key do
-      case 0 then return neco.riv.keys[RIV_KEYCODE_LEFT].down
-      case 1 then return neco.riv.keys[RIV_KEYCODE_RIGHT].down
-      case 2 then return neco.riv.keys[RIV_KEYCODE_UP].down
-      case 3 then return neco.riv.keys[RIV_KEYCODE_DOWN].down
-      case 4 then return neco.riv.keys[RIV_KEYCODE_Z].down
-      case 5 then return neco.riv.keys[RIV_KEYCODE_X].down
+      case 0 then return neco.riv.keys[RIV_GAMEPAD_LEFT].press
+      case 1 then return neco.riv.keys[RIV_GAMEPAD_RIGHT].press
+      case 2 then return neco.riv.keys[RIV_GAMEPAD_UP].press
+      case 3 then return neco.riv.keys[RIV_GAMEPAD_DOWN].press
+      case 4 then return neco.riv.keys[RIV_GAMEPAD_A1].press
+      case 5 then return neco.riv.keys[RIV_GAMEPAD_A2].press
     end
     return false
   end
@@ -428,9 +428,7 @@ require 'memory'
 ## end
 
 ## function neco_run()
-  local function init(ctx: *riv_context)
-    neco.riv = ctx
-
+  local function init()
     ## for i=0,#neco_palette do
       local c = #[neco_palette[i]]#
       c = (((c >>  0) & 0xff) << 16) |
@@ -440,12 +438,16 @@ require 'memory'
       neco.altpalette[#[i]#] = #[i]#
     ## end
 
+    neco.riv.framebuffer_desc.width = SCREEN_WIDTH
+    neco.riv.framebuffer_desc.height = SCREEN_HEIGHT
+    neco.riv.framebuffer_desc.target_fps = SCREEN_TARGET_FPS
+    neco.riv.framebuffer_desc.pixel_format = RIV_PIXELFORMAT_PLT256
     ## if symbols._init then
       _init()
     ## end
   end
 
-  local function frame(ctx: *riv_context)
+  local function frame()
     ## if symbols._update then
       _update()
     ## end
@@ -454,16 +456,8 @@ require 'memory'
     ## end
   end
 
-  riv_run(&(@riv_run_desc){
-    init_cb = init,
-    frame_cb = frame,
-    framebuffer_desc = {
-      width = SCREEN_WIDTH,
-      height = SCREEN_HEIGHT,
-      target_fps = SCREEN_TARGET_FPS,
-      pixel_format = RIV_PIXELFORMAT_PAL256,
-    }
-  })
+  init()
+  repeat frame() until not riv_present()
 
   -- ## nostartfiles()
 ## end

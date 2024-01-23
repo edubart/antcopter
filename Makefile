@@ -1,3 +1,4 @@
 NAME=antcopter
+DEMOLANG=nelua
 ASSETS_DIR=cartridge-assets
-include ../demo-nelua.mk
+include ../demo-base.mk
