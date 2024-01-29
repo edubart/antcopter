@@ -1184,8 +1184,8 @@ function Game:save_score(finished: boolean)
   local berries: int32 = self:get_berries_score()
   local score: int64 = self:get_score()
   neco.riv.outcard_len = riv_snprintf(neco.riv.inoutbuffer, RIV_MMIOSIZE_INOUTBUFFER,
-    [[JSON{"score":%d,"berries":%u,"frames":%u,"deaths":%u,"finished":%s}]],
-      score, berries, frames, self.deaths, finished_str)
+    [[JSON{"score":%d,"level":%d,"berries":%u,"frames":%u,"deaths":%u,"finished":%s}]],
+      score, self.level, berries, frames, self.deaths, finished_str)
 end
 
 function Game:update()
