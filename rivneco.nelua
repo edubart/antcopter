@@ -102,7 +102,7 @@ require 'memory'
 ]==]
 
   global neco = @record{}
-  global neco.riv: *riv_context = &riv
+  global neco.riv: *riv_context = riv
   global neco.tilesize <comptime> = #[neco_tilesize]#
   global neco.gfxwidth <comptime> = #[neco_gfxwidth]#
   global neco.gfxheight <comptime> = #[neco_gfxheight]#
