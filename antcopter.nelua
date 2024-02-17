@@ -211,7 +211,8 @@ local SoundEffectId = @enum(uint8){
   Step1,
   Step2,
   GameStart,
-  GameEnd
+  GameEnd,
+  GameOver,
 }
 
 local Game = @record{
@@ -223,7 +224,8 @@ local Game = @record{
   end_frame: uint32,
   level_frame: uint32,
   music_dispatch_frame: uint32,
-  deaths: uint16,
+  deaths: int32,
+  hearts: int32,
   level: uint8,
   next_level: uint8,
   berries: uint8,
@@ -273,6 +275,8 @@ global function sfx(x: integer)
     desc={start_frequency=220, end_frequency=440, sustain=60, release=4, type=WaveType.NOISE, amplitude=0.3}
   case SoundEffectId.GameEnd then -- game end
     desc={start_frequency=220, end_frequency=440*4, sustain=112, release=4, type=WaveType.PULSE, amplitude=0.3}
+  case SoundEffectId.GameOver then -- game end
+    desc={start_frequency=220, end_frequency=110, sustain=40, release=4, type=WaveType.SQUARE, amplitude=0.2}
   else
     return
   end
@@ -432,8 +436,15 @@ local DeadEffect = @record{
 }
 
 function DeadEffect:_update()
-  self.frames = self.frames + 1
-  game.level_finished = self.frames > 60
+  self.frames = math.min(self.frames + 1, 61)
+  if game.hearts == 0 then
+    if game.end_frame == 0 then
+      sfx(SoundEffectId.GameOver)
+      game.end_frame = game.frame
+    end
+  else
+    game.level_finished = self.frames > 60
+  end
 end
 
 function DeadEffect:_draw()
@@ -581,15 +592,16 @@ function Player:_update()
     self.base:add_flag(ObjectFlag.Removed)
     game.shake_stop_frame = game.frame + 15
     game.deaths = game.deaths + 1
+    game.hearts = game.hearts - 1
     sfx(SoundEffectId.Death)
     return
   end
-  local right_pressed =  not self.locked and btn(BTN_RIGHT)
-  local left_pressed =  not self.locked and btn(BTN_LEFT)
-  local down_pressed =  not self.locked and btn(BTN_DOWN)
-  local up_pressed =  not self.locked and btn(BTN_UP)
-  local jump_pressed =  not self.locked and btn(BTN_O)
-  local accel_pressed =  not self.locked and btn(BTN_X)
+  local right_pressed = not self.locked and btn(BTN_RIGHT)
+  local left_pressed = not self.locked and btn(BTN_LEFT)
+  local down_pressed = not self.locked and btn(BTN_DOWN)
+  local up_pressed = not self.locked and btn(BTN_UP)
+  local jump_pressed = not self.locked and btn(BTN_O)
+  local accel_pressed = not self.locked and btn(BTN_X)
   local ground = self.base:collides_with_blockable({0,1})
   local flying = not ground
   local winding = self.base:collides_with({0,0}, ObjectId.Wind)
@@ -1277,28 +1289,40 @@ local function write_time(sb: *stringbuilder, frames: uint32)
 end
 
 function Game:draw_end_game()
-  rectfill(40-4, 64-4-50, 160-(40-4), 160-(64-4)-50, 3)
-  rectfill(40-4+1, 64-4+1-50, 160-(40-4)-1, 160-(64-4)-1-50, 2)
-  ptext('game completed!', 53, 14, 4, 1)
+  rectfill(36  , 40  , 124, 89, 3)
+  rectfill(36+1, 40+1, 124-1, 89-1, 2)
+  ptext('game over!', 63, 44, 4, 1)
   sb:clear() sb:write('total time: ')
   write_time(sb, self:get_frames_score())
-  ptext(sb:view(), 40, 14 + 9, 4, 1)
+  ptext(sb:view(), 40, 44 + 9, 4, 1)
   sb:clear() sb:write('total deaths: ') sb:write(self.deaths)
-  ptext(sb:view(), 40, 14 + 18, 4, 1)
-  sb:clear() sb:write('total fruits: ') sb:write(self:get_berries_score()) sb:write('/80')
-  ptext(sb:view(), 40, 14 + 27, 4, 1)
+  ptext(sb:view(), 40, 44 + 18, 4, 1)
+  sb:clear() sb:write('total fruits: ') sb:write(self:get_berries_score())
+  ptext(sb:view(), 40, 44 + 27, 4, 1)
+  sb:clear() sb:write('total levels: ') sb:write(self.level)
+  ptext(sb:view(), 40, 44 + 36, 4, 1)
 end
 
-function Game:draw_time(box: Rect)
+function Game:draw_stats(box: Rect)
   sb:clear() write_time(sb, game.frame)
-  rectfill(box.x, box.y, box.x+box.w-1, box.y+box.h-1, 3)
+  rectfill(box.x-1, box.y-1, box.x+box.w, box.y+box.h, 3)
+  rectfill(box.x, box.y, box.x+box.w-1, box.y+box.h-1, 2)
   ptext(sb:view(), box.x+1, box.y+1, 4, 1)
+
+  -- fruits
+  sb:clear() sb:write(self:get_berries_score())
+  spr(ObjectId.Fruit, box.x, box.y+6, 1, 1, false, false)
+  ptext(sb:view(), box.x+7, box.y+9, 4, 1)
+
+  -- hearts
+  sb:clear() sb:write(self.hearts)
+  spr(54, box.x+17, box.y+7, 1, 1, false, false)
+  ptext(sb:view(), box.x+25, box.y+9, 4, 1)
 end
 
 function Game:draw_level_title()
-  sb:clear() sb:write('level ', game.level)
   rectfill(50, 70, 110, 70+20, 3)
-  rectfill(50+1, 70+1, 110-1, 70+20-1, 2)
+  sb:clear() sb:write('level ', game.level)
   ptext(sb:view(), 65, 78, 4, 1)
 end
 
@@ -1321,7 +1345,7 @@ function Game:draw_level()
     self:draw_level_title()
   end
   if game.level_frame < 120 then
-    self:draw_time{4,4,33,7}
+    self:draw_stats{4,4,33,15}
   end
   if self.end_frame ~= 0 then
     self:draw_end_game()
@@ -1352,6 +1376,12 @@ local function _init()
   ## if LEVEL then
   game:load_level(#[LEVEL]#)
   ## end
+end
+
+game.hearts = 20
+
+if argc >= 2 then
+  game.hearts = tointeger(argv[1])
 end
 
 ## neco_run()
