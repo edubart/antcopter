@@ -2,7 +2,6 @@
     "name": "Antcopter",
     "summary": "A 2D speed run platform game where you are a little ant that can glide in the air",
     "description": "How fast can you complete all levels while collecting all berries?\nThere are 20 levels and 80 berries.\n\nGame controls:\n- Press LEFT and RIGH to move horizontally.\n- Press DOWN to fall faster.\n- Press Z to jump.\n- Hold Z while in the air to glide.\n- Hold X to lift up (unlocked only after Level 10).\n\nTIP: After level 10, holding Z and X simultaneously can be easier.\n\nSome levels can be challenging, be warned!\nIt should take about 30 minutes for an inexperienced player to finish all of them,\nwhile it should take 5 minutes for an skilled player.\n\nThe game complete game sources are available at its GitHub repository.",
-    "status": "complete",
     "tags": ["action", "2d", "platform", "speedrun", "pixel art"],
     "authors": [{
         "name": "Eduardo Bart",
