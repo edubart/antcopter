@@ -406,8 +406,8 @@ require 'memory'
       case 1 then return neco.riv.keys[RIV_GAMEPAD_RIGHT].down
       case 2 then return neco.riv.keys[RIV_GAMEPAD_UP].down
       case 3 then return neco.riv.keys[RIV_GAMEPAD_DOWN].down
-      case 4 then return neco.riv.keys[RIV_GAMEPAD_A1].down
-      case 5 then return neco.riv.keys[RIV_GAMEPAD_A2].down
+      case 4 then return neco.riv.keys[RIV_GAMEPAD_A1].down or neco.riv.keys[RIV_GAMEPAD_A4].down
+      case 5 then return neco.riv.keys[RIV_GAMEPAD_A2].down or neco.riv.keys[RIV_GAMEPAD_A3].down
     end
     return false
   end
@@ -419,8 +419,8 @@ require 'memory'
       case 1 then return neco.riv.keys[RIV_GAMEPAD_RIGHT].press
       case 2 then return neco.riv.keys[RIV_GAMEPAD_UP].press
       case 3 then return neco.riv.keys[RIV_GAMEPAD_DOWN].press
-      case 4 then return neco.riv.keys[RIV_GAMEPAD_A1].press
-      case 5 then return neco.riv.keys[RIV_GAMEPAD_A2].press
+      case 4 then return neco.riv.keys[RIV_GAMEPAD_A1].press or neco.riv.keys[RIV_GAMEPAD_A4].press
+      case 5 then return neco.riv.keys[RIV_GAMEPAD_A2].press or neco.riv.keys[RIV_GAMEPAD_A3].press
     end
     return false
   end
