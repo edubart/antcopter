@@ -1183,9 +1183,12 @@ end
 function Game:get_score(): int64
   local frames: int64 = self:get_frames_score()
   local berries: int32 = self:get_berries_score()
-  local score: int64 = berries*600 - self.deaths*300 - frames
+  local score: int64 =
+    (game.level*(1+game.level)//2)*500
+    + berries*600 -
+    - self.deaths*300 - frames
   if game:is_at_end() then
-    score = score + 2400
+    score = score + 20000
   end
   return score
 end
