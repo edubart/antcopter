@@ -1185,7 +1185,7 @@ function Game:get_score(): int64
   local berries: int32 = self:get_berries_score()
   local score: int64 =
     (game.level*(1+game.level)//2)*500
-    + berries*600 -
+    + berries*600
     - self.deaths*300 - frames
   if game:is_at_end() then
     score = score + 20000
@@ -1239,8 +1239,8 @@ function Game:update()
   self:save_score()
   game.frame = game.frame + 1
 
-  -- quit 10 seconds after the game ends
-  if game.end_frame ~= 0 and game.frame >= game.end_frame + 600 then
+  -- quit 1 seconds after the game ends
+  if game.end_frame ~= 0 and game.frame >= game.end_frame + 60 then
     quit()
   end
 end
