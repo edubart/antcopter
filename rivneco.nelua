@@ -156,7 +156,7 @@ require 'memory'
 
   -- Clear screen
   global function cls(col: opt_scalar_concept)
-    memory.set(neco.riv.framebuffer, col, SCREEN_WIDTH * SCREEN_HEIGHT)
+    memory.set(&neco.riv.framebuffer[0], col, SCREEN_WIDTH * SCREEN_HEIGHT)
   end
 
   global function quit()

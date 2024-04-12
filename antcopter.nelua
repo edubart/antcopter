@@ -966,6 +966,7 @@ end
 local Platform = @record{
   base: Object,
   spawn_x: float32,
+  spawn_speed: float32,
 }
 
 function Platform:_bbox(): Rect
@@ -975,12 +976,13 @@ end
 function Platform:__new()
   self.base.flags = ObjectFlag.Blockable
   self.spawn_x = self.base.pos.x
+  self.spawn_speed = 2.0 + riv_rand_float()*2.0
 end
 
 function Platform:_update()
   local oldx = self.base.pos.x
   local xdir = (self.spawn_x // TILE_SIZE) % 2 == 0 and 1 or -1
-  self.base.pos.x = self.spawn_x + xdir*((math.sin((game.frame/60)*3) * TILE_SIZE*2)//1)
+  self.base.pos.x = self.spawn_x + xdir*((math.sin((game.frame/60)*self.spawn_speed) * TILE_SIZE*2)//1)
   local dx = self.base.pos.x - oldx
   if dx ~= 0 then
     local player = (@*Player)(self.base:collides_with({0,-1}, ObjectId.Player) or
@@ -1198,7 +1200,7 @@ function Game:save_score(finished: boolean)
   local frames: int64 = self:get_frames_score()
   local berries: int32 = self:get_berries_score()
   local score: int64 = self:get_score()
-  neco.riv.outcard_len = riv_snprintf(neco.riv.inoutbuffer, RIV_MMIOSIZE_INOUTBUFFER,
+  neco.riv.outcard_len = riv_snprintf(&neco.riv.outcard[0], RIV_SIZE_OUTCARD,
     [[JSON{"score":%d,"level":%d,"berries":%u,"frames":%u,"deaths":%u,"finished":%s}]],
       score, self.level, berries, frames, self.deaths, finished_str)
 end
