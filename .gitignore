@@ -1,6 +1,3 @@
-*.txt
-*.elftoc.c
 *.sqfs
 *.elf
-*.fs
-antcopter.c
+*.c

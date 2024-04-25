@@ -438,10 +438,10 @@ require 'memory'
       neco.altpalette[#[i]#] = #[i]#
     ## end
 
-    neco.riv.framebuffer_desc.width = SCREEN_WIDTH
-    neco.riv.framebuffer_desc.height = SCREEN_HEIGHT
-    neco.riv.framebuffer_desc.target_fps = SCREEN_TARGET_FPS
-    neco.riv.framebuffer_desc.pixel_format = RIV_PIXELFORMAT_PLT256
+    neco.riv.width = SCREEN_WIDTH
+    neco.riv.height = SCREEN_HEIGHT
+    neco.riv.target_fps = SCREEN_TARGET_FPS
+    neco.riv.pixel_format = RIV_PIXELFORMAT_PLT256
     ## if symbols._init then
       _init()
     ## end

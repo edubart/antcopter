@@ -1,18 +1,4 @@
-##[[
--- Replace default primitives (shrinks about 113 bytes)
--- primtypes.uinteger = primtypes.uint32
--- primtypes.integer = primtypes.int32
-primtypes.number = primtypes.float32
-
--- Disable the GC (shrink about 3976 bytes)
-pragma{nogc = true}
-]]
-
--- Replace general allocator to use a heap on static memory (shrink about 9295 bytes)
--- WARNING: Heap memory will be fixed to 32KB, tune to not have out memory errors.
--- require 'allocators.heap'
--- global embedded_general_allocator: HeapAllocator(32*1024)
--- require 'allocators.default'
+## pragma{nogc = true, noerrorloc = true}
 
 require '.rivneco'
 
