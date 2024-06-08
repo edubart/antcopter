@@ -3,7 +3,7 @@
 A speedrun platformer game written in [Nelua](https://nelua.io/) for [RIV](https://docs.rives.io) fantasy console.
 
 You can play it in your browser
-[here](https://edubart.itch.io/antcopter)
+[here](https://edubart.itch.io/antcopter).
 
 ![Screenshot](https://raw.githubusercontent.com/edubart/antcopter/master/antcopter.png)
 
