@@ -7,5 +7,9 @@
         "name": "Eduardo Bart",
         "link": "https://github.com/edubart"
     }],
-    "url": "https://github.com/edubart/antcopter"
+    "links": [
+        "https://github.com/edubart/antcopter",
+        "https://discord.com/channels/1207694461476409394/1240050722536558803",
+        "https://edubart.itch.io/antcopter"
+    ]
 }
